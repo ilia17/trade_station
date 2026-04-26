@@ -56,7 +56,18 @@ public:
         });
     }
 
-private:
+    // Non-blocking cancel: returns a future with the result.
+    std::future<OrderResult> cancel(const std::string& exchange,
+                                    const std::string& symbol,
+                                    const std::string& order_id) {
+        return std::async(std::launch::async, [=, this]() -> OrderResult {
+            if (exchange == "MEXC"  && mexc_)  return mexc_->cancel_limit_order(symbol, order_id);
+            if (exchange == "Gate"  && gate_)  return gate_->cancel_limit_order(symbol, order_id);
+            if (exchange == "BingX" && bingx_) return bingx_->cancel_limit_order(symbol, order_id);
+            if (exchange == "LBank" && lbank_) return lbank_->cancel_limit_order(symbol, order_id);
+            return {false, "", "No trader for " + exchange};
+        });
+    }
     std::unique_ptr<MexcTrader>  mexc_;
     std::unique_ptr<GateTrader>  gate_;
     std::unique_ptr<BingXTrader> bingx_;

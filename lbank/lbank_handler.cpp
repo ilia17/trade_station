@@ -205,7 +205,10 @@ void LBankHandler::parse_trade(const json& j) {
             return v.is_string() ? std::stod(v.get<std::string>()) : v.get<double>();
         };
         if (t.contains("price"))  tr.price = to_d(t["price"]);
-        if (t.contains("vol"))    tr.qty   = to_d(t["vol"]);
+        // LBank V2 sends quantity as "amount"; "vol" is a fallback
+        if      (t.contains("amount")) tr.qty = to_d(t["amount"]);
+        else if (t.contains("vol"))    tr.qty = to_d(t["vol"]);
+        else if (t.contains("volume")) tr.qty = to_d(t["volume"]);
         tr.is_buy = t.contains("direction") &&
                     t["direction"].get<std::string>() == "buy";
         shared_trades->add(name.c_str(), tr);

@@ -155,6 +155,17 @@ static void draw_order_form(int idx, const OrderBookUpdate& ex,
         OrderResult r = f.pending.get();
         f.status     = r.success ? OrderStatus::OK : OrderStatus::ERROR;
         f.status_msg = r.success ? ("ID: " + r.order_id) : r.message;
+        if (r.success && !r.order_id.empty()) {
+            PlacedOrder po;
+            po.order_id = r.order_id;
+            po.symbol   = ex.symbol;
+            po.side     = f.side == 0 ? Side::BUY : Side::SELL;
+            try { po.price = std::stod(f.price_buf); } catch (...) {}
+            try { po.qty   = std::stod(f.qty_buf);   } catch (...) {}
+            if (f.orders.size() >= 10)
+                f.orders.erase(f.orders.begin());
+            f.orders.push_back(std::move(po));
+        }
     }
 
     ImGui::Spacing();
@@ -213,9 +224,92 @@ static void draw_order_form(int idx, const OrderBookUpdate& ex,
     if      (f.status == OrderStatus::PENDING)
         ImGui::TextColored(ImVec4(1,1,0,1),        "Sending...");
     else if (f.status == OrderStatus::OK)
-        ImGui::TextColored(ImVec4(0.3f,1,0.3f,1),  "OK  %s", f.status_msg.c_str());
+        ImGui::TextColored(ImVec4(0.3f,1,0.3f,1),  "Placed");
     else if (f.status == OrderStatus::ERROR)
         ImGui::TextColored(ImVec4(1,0.3f,0.3f,1),  "ERR %s", f.status_msg.c_str());
+}
+
+// ── Open orders table (placed this session, with Cancel button) ───────────────
+
+static void draw_open_orders(int idx, const OrderBookUpdate& ex,
+                             TradeManager& trader) {
+    OrderFormState& f = g_forms[idx];
+    if (f.orders.empty()) return;
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Open Orders");
+
+    // Poll cancel futures
+    for (auto& o : f.orders) {
+        if (o.cancelling && o.cancel_fut && o.cancel_fut->valid() &&
+            o.cancel_fut->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            OrderResult r = o.cancel_fut->get();
+            o.cancelling = false;
+            if (r.success) { o.cancelled   = true; o.cancel_msg = "Cancelled"; }
+            else            { o.cancel_error = true; o.cancel_msg = r.message; }
+        }
+    }
+
+    float row_h = ImGui::GetTextLineHeightWithSpacing();
+    int   rows  = (int)f.orders.size() + 1;           // +1 for header
+    float tbl_h = std::min((float)rows * row_h + ImGui::GetStyle().ScrollbarSize,
+                           6.f * row_h + ImGui::GetStyle().ScrollbarSize);
+
+    char tid[32]; snprintf(tid, sizeof(tid), "##oo%d", idx);
+    ImGuiTableFlags tfl = ImGuiTableFlags_NoHostExtendX |
+                          ImGuiTableFlags_SizingFixedFit |
+                          ImGuiTableFlags_ScrollY       |
+                          ImGuiTableFlags_BordersInnerH;
+
+    if (!ImGui::BeginTable(tid, 4, tfl, ImVec2(-1, tbl_h))) return;
+
+    ImGui::TableSetupColumn("Side",  ImGuiTableColumnFlags_WidthFixed,   40.f);
+    ImGui::TableSetupColumn("Price", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+    ImGui::TableSetupColumn("Qty",   ImGuiTableColumnFlags_WidthStretch, 1.6f);
+    ImGui::TableSetupColumn("",      ImGuiTableColumnFlags_WidthFixed,   76.f);
+    ImGui::TableHeadersRow();
+
+    for (auto& o : f.orders) {
+        ImGui::TableNextRow();
+        bool is_buy = (o.side == Side::BUY);
+        ImVec4 side_col = is_buy
+            ? ImVec4(0.35f, 0.85f, 0.45f, 1.f)
+            : ImVec4(0.9f,  0.35f, 0.35f, 1.f);
+
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(side_col, "%s", is_buy ? "BUY" : "SELL");
+
+        ImGui::TableSetColumnIndex(1);
+        ImGui::Text("%s", fmt_price(o.price).c_str());
+
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Text("%s", fmt_qty(o.qty).c_str());
+
+        ImGui::TableSetColumnIndex(3);
+        if (o.cancelled) {
+            ImGui::TextColored(ImVec4(0.45f,0.45f,0.45f,1.f), "Cancelled");
+        } else if (o.cancel_error) {
+            ImGui::TextColored(ImVec4(1.f,0.4f,0.4f,1.f), "Error");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", o.cancel_msg.c_str());
+        } else if (o.cancelling) {
+            ImGui::TextDisabled("Cancelling..");
+        } else {
+            char btn_id[40];
+            snprintf(btn_id, sizeof(btn_id), "Cancel##%s", o.order_id.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                                  ImVec4(0.45f, 0.08f, 0.08f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                  ImVec4(0.65f, 0.12f, 0.12f, 1.f));
+            if (ImGui::Button(btn_id, ImVec2(-1, 0))) {
+                o.cancelling = true;
+                o.cancel_fut = std::make_shared<std::future<OrderResult>>(
+                    trader.cancel(ex.exchange, o.symbol, o.order_id));
+            }
+            ImGui::PopStyleColor(2);
+        }
+    }
+    ImGui::EndTable();
 }
 
 // ── Full panel ────────────────────────────────────────────────────────────────
@@ -269,6 +363,9 @@ static void draw_panel(int idx, const OrderBookUpdate& ex,
 
     // Order form
     draw_order_form(idx, ex, trader);
+
+    // Open orders for this panel
+    draw_open_orders(idx, ex, trader);
 }
 
 // ── Main render loop ──────────────────────────────────────────────────────────

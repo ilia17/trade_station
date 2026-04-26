@@ -86,13 +86,11 @@ void MexcHandler::on_message(websocketpp::connection_hdl hdl,
                     asks_book.clear();
                     awaiting_sub_ack.store(false, std::memory_order_release);
                 }
+                // Suppress channel subscription/unsubscription acks — they are noisy
+                if (ack_msg.find("spot@") != std::string::npos) return;
             }
-            // Deals channel is blocked in JSON path — handled above
-            // Keep this as a no-op guard in case MEXC ever sends JSON deals.
-            if (j.contains("c") && j["c"].is_string() &&
-                j["c"].get<std::string>().find("deals") != std::string::npos) {
-                return; // handled in binary path
-            }
+            // Silence pong echoes too
+            if (j.contains("msg") && j["msg"] == "pong") return;
             std::cout << "[MEXC] server msg: " << raw << "\n";
         } catch (...) {}
         return;
@@ -117,7 +115,9 @@ void MexcHandler::on_message(websocketpp::connection_hdl hdl,
         }
 
         if (wrapper.has_publicaggredeals()) {
-            parse_trade_pb(wrapper.publicaggredeals());
+            // Guard: only accept trades for the currently subscribed symbol
+            if (!wrapper.has_symbol() || wrapper.symbol() == symbol)
+                parse_trade_pb(wrapper.publicaggredeals());
         }
     } catch (const std::exception& e) {
         std::cout << "[MEXC] error: " << e.what() << "\n";
@@ -209,7 +209,6 @@ void MexcHandler::subscribe_trades() {
     client.send(connection, sub.dump(), websocketpp::frame::opcode::text);
 }
 
-// Called from on_message binary branch
 void MexcHandler::parse_trade_pb(const PublicAggreDealsV3Api& deals) {
     if (!shared_trades) return;
     for (int i = 0; i < deals.deals_size(); i++) {
@@ -225,30 +224,32 @@ void MexcHandler::parse_trade_pb(const PublicAggreDealsV3Api& deals) {
 
 void MexcHandler::change_symbol(const std::string& base, const std::string& quote) {
     if (!running.load()) return;
+    std::string old_sym = symbol;
     std::string new_sym = base + quote;  // MEXC: no separator, e.g. ETHUSDT
-    // Unsubscribe old
-    json unsub = {
-        {"method", "UNSUBSCRIPTION"},
-        {"params", {"spot@public.aggre.depth.v3.api.pb@100ms@" + symbol}}
-    };
+
     websocketpp::lib::error_code ec;
-    client.send(connection, unsub.dump(), websocketpp::frame::opcode::text, ec);
-    // Gate: discard all binary frames until the new subscription ack arrives
+
+    // Unsubscribe old depth + deals
+    json unsub_depth = {{"method","UNSUBSCRIPTION"},
+        {"params", {"spot@public.aggre.depth.v3.api.pb@100ms@" + old_sym}}};
+    json unsub_deals = {{"method","UNSUBSCRIPTION"},
+        {"params", {"spot@public.aggre.deals.v3.api.pb@100ms@" + old_sym}}};
+    client.send(connection, unsub_depth.dump(), websocketpp::frame::opcode::text, ec);
+    client.send(connection, unsub_deals.dump(), websocketpp::frame::opcode::text, ec);
+
+    // Gate: discard all binary frames until the new depth subscription is acked
     awaiting_sub_ack.store(true, std::memory_order_release);
     bids_book.clear();
     asks_book.clear();
     symbol = new_sym;
-    // Subscribe new
-    json sub = {
-        {"method", "SUBSCRIPTION"},
-        {"params", {"spot@public.aggre.depth.v3.api.pb@100ms@" + symbol}}
-    };
-    client.send(connection, sub.dump(), websocketpp::frame::opcode::text, ec);
-    // Resubscribe trades channel (JSON aggre deals)
-    json tsub = {
-        {"method", "SUBSCRIPTION"},
-        {"params", {"spot@public.aggre.deals.v3.api.pb@100ms@" + symbol}}
-    };
-    client.send(connection, tsub.dump(), websocketpp::frame::opcode::text, ec);
+
+    // Subscribe new depth + deals
+    json sub_depth = {{"method","SUBSCRIPTION"},
+        {"params", {"spot@public.aggre.depth.v3.api.pb@100ms@" + symbol}}};
+    json sub_deals = {{"method","SUBSCRIPTION"},
+        {"params", {"spot@public.aggre.deals.v3.api.pb@100ms@" + symbol}}};
+    client.send(connection, sub_depth.dump(), websocketpp::frame::opcode::text, ec);
+    client.send(connection, sub_deals.dump(), websocketpp::frame::opcode::text, ec);
+
     std::cout << "[MEXC] Resubscribed to " << symbol << " (awaiting ack)\n";
 }

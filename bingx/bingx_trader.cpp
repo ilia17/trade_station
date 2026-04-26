@@ -42,3 +42,30 @@ OrderResult BingXTrader::place_limit_order(Side side, const std::string& symbol,
         return {false, "", e.what()};
     }
 }
+
+OrderResult BingXTrader::cancel_limit_order(const std::string& symbol,
+                                             const std::string& order_id) {
+    try {
+        long long ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        std::ostringstream ps;
+        ps << "symbol="    << symbol
+           << "&orderId="   << order_id
+           << "&timestamp=" << ts;
+        std::string params = ps.str();
+        params += "&signature=" + hmac_sha256_hex(api_secret_, params);
+
+        std::string resp = https_get("open-api.bingx.com",
+            "/openApi/spot/v1/trade/cancel?" + params,
+            {{"X-BX-APIKEY", api_key_}});
+
+        auto j = json::parse(resp);
+        if (j.contains("data") && j["data"].contains("orderId"))
+            return {true, order_id, "Cancelled"};
+        std::string msg = j.contains("msg") ? j["msg"].get<std::string>() : resp;
+        return {false, "", msg};
+    } catch (const std::exception& e) {
+        return {false, "", e.what()};
+    }
+}

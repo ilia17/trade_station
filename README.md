@@ -1,6 +1,6 @@
 # Trade Station — Multi-Exchange Order Book & Trading Terminal
 
-A high-performance,low-latency C++ trading terminal that streams real-time order books and recent trades from four cryptocurrency exchanges simultaneously, renders them side-by-side in a native ImGui GUI, and supports live limit order placement on all four exchanges — all from a single window.
+A high-performance, low-latency C++ trading terminal that streams real-time order books and recent trades from four cryptocurrency exchanges simultaneously, renders them side-by-side in a native ImGui GUI, and supports live limit order placement and cancellation on all four exchanges — all from a single window.
 
 ---
 
@@ -14,6 +14,7 @@ A high-performance,low-latency C++ trading terminal that streams real-time order
 | **Currency labels** | "Qty (BTC)" / "Total (USDT)" update when you switch symbol |
 | **Symbol switching** | One input bar changes all four feeds simultaneously |
 | **Limit orders** | BUY / SELL on MEXC, Gate, BingX, LBank — async, non-blocking |
+| **Order cancellation** | Placed orders appear in an "Open Orders" table per panel; click Cancel to remove them |
 | **Comma formatting** | Prices, quantities, and totals all use thousands separators |
 | **Native cursor** | Uses the OS mouse cursor (not an ImGui software cursor) |
 
@@ -40,14 +41,13 @@ A high-performance,low-latency C++ trading terminal that streams real-time order
                    │  4 panels: asks · spread · bids      │
                    │           recent trades              │
                    │           limit order form           │
+                   │           open orders + cancel       │
                    └──────────┬──────────────────────────┘
                               │  std::async (non-blocking)
                    ┌──────────▼──────────┐
                    │    TradeManager     │
-                   │  MexcTrader         │
-                   │  GateTrader         │
-                   │  BingXTrader        │
-                   │  LBankTrader        │
+                   │  submit() → place   │
+                   │  cancel() → remove  │
                    └─────────────────────┘
 
  Each handler also writes directly to SharedTrades (mutex-protected)
@@ -73,24 +73,24 @@ trade_station/
 │
 ├── mexc/
 │   ├── mexc_handler.h/.cpp     — WS: protobuf aggre.depth + aggre.deals
-│   └── mexc_trader.h/.cpp      — REST: HMAC-SHA256, X-MEXC-APIKEY header
+│   └── mexc_trader.h/.cpp      — REST: place + cancel, HMAC-SHA256, X-MEXC-APIKEY
 │
 ├── gate/
 │   ├── gate_handler.h/.cpp     — WS: JSON spot.order_book + spot.trades
-│   └── gate_trader.h/.cpp      — REST: HMAC-SHA512 5-line canonical signature
+│   └── gate_trader.h/.cpp      — REST: place + cancel, HMAC-SHA512 5-line canonical sig
 │
 ├── bingx/
 │   ├── bingx_handler.h/.cpp    — WS: gzip-JSON depth20 + trade stream
-│   └── bingx_trader.h/.cpp     — REST: HMAC-SHA256, X-BX-APIKEY header
+│   └── bingx_trader.h/.cpp     — REST: place (POST) + cancel (GET), HMAC-SHA256
 │
 ├── lbank/
 │   ├── lbank_handler.h/.cpp    — WS: JSON depth snapshots + trade stream
-│   └── lbank_trader.h/.cpp     — REST: HMAC-SHA256 form-encoded
+│   └── lbank_trader.h/.cpp     — REST: place + cancel, HMAC-SHA256 form-encoded
 │
 ├── trading/
-│   ├── order.h                 — Side, OrderRequest, OrderResult, OrderFormState
-│   ├── rest_client.h           — hmac_sha256/512, sha512, url_encode, https_post
-│   └── trade_manager.h         — loads env vars, owns traders, async submit()
+│   ├── order.h                 — Side, OrderResult, PlacedOrder, OrderFormState
+│   ├── rest_client.h           — hmac_sha256/512, sha512, url_encode, https_post/get/delete
+│   └── trade_manager.h         — loads env vars, owns traders, async submit() + cancel()
 │
 ├── ui/
 │   ├── render.h                — render_run() declaration
@@ -170,10 +170,9 @@ proto/
 └── ... (other MEXC proto schemas)
 ```
 
-These are generated from MEXC's official `.proto` files:
+Generated from MEXC's official `.proto` files:
 
 ```bash
-# Download MEXC proto files from their GitHub, then generate:
 protoc --cpp_out=proto/ proto/*.proto
 ```
 
@@ -213,18 +212,14 @@ make
 
 Expected output: a single `orderbook_stream` binary. Build time is ~30–60 seconds on first compile (ImGui + all protobuf files).
 
-To clean and rebuild from scratch:
-
 ```bash
-make clean && make
+make clean && make   # full rebuild from scratch
 ```
 
 ### 8 — Run
 
 ```bash
-# Make sure keys are loaded if you want trading
-source .env
-
+source .env          # only needed if trading
 ./orderbook_stream
 ```
 
@@ -240,7 +235,7 @@ A native window opens. The four exchange panels appear as data arrives (usually 
 Symbol  [ BTC ]  /  [ USDT ]   [ Apply All ]
 ```
 
-Type any base and quote symbol, then click **Apply All**. All four exchanges unsubscribe from the old pair and subscribe to the new one simultaneously. The order book and trades columns clear immediately.
+Type any base and quote symbol, then click **Apply All**. All four exchanges unsubscribe from the old pair and subscribe to the new one simultaneously. Order books, trades, and the open-orders list clear immediately.
 
 ### Order book panels
 
@@ -255,11 +250,22 @@ Each panel shows:
 ### Order form
 
 1. Toggle **BUY** or **SELL**
-2. Adjust Price and Qty if needed
+2. Adjust Price and Qty if needed (or click a row to auto-fill both)
 3. Check the calculated **Total**
-4. Click **Place Limit Order**
+4. Click **Place Limit Order** — the button is disabled without API keys
 
-Order status appears inline: yellow "Sending…" → green "OK  \<order-id\>" or red "ERR \<message\>".
+### Open Orders
+
+After a successful placement, the order appears in the **Open Orders** table directly below the form:
+
+| Column | Description |
+|---|---|
+| Side | Green BUY / Red SELL |
+| Price | The limit price |
+| Qty | The order quantity |
+| Action | **Cancel** button → fires async cancel; shows "Cancelling…" → "Cancelled" or "Error" (hover for details) |
+
+Up to 10 orders are tracked per panel per session. The list resets when you switch symbol.
 
 ---
 
@@ -274,14 +280,14 @@ Order status appears inline: yellow "Sending…" → green "OK  \<order-id\>" or
 | BingX | `wss://open-api-ws.bingx.com/market` | `BTC-USDT` | Gzip JSON | Full snapshots + trades |
 | LBank | `wss://www.lbkex.net/ws/V2/` | `btc_usdt` | JSON | Full snapshots + trades |
 
-### REST Order Placement
+### REST Order Placement & Cancellation
 
-| Exchange | Endpoint | Auth |
-|---|---|---|
-| MEXC  | `api.mexc.com/api/v3/order` | HMAC-SHA256 + `X-MEXC-APIKEY` header |
-| Gate  | `api.gateio.ws/api/v4/spot/orders` | HMAC-SHA512 5-line canonical sig |
-| BingX | `open-api.bingx.com/openApi/spot/v1/trade/order` | HMAC-SHA256 + `X-BX-APIKEY` header |
-| LBank | `api.lbkex.com/v2/supplement/create_order.do` | HMAC-SHA256 form-encoded params |
+| Exchange | Place endpoint | Cancel endpoint | Auth |
+|---|---|---|---|
+| MEXC  | `POST api.mexc.com/api/v3/order` | `DELETE /api/v3/order` | HMAC-SHA256 + `X-MEXC-APIKEY` |
+| Gate  | `POST api.gateio.ws/api/v4/spot/orders` | `DELETE /api/v4/spot/orders/{id}` | HMAC-SHA512 5-line canonical sig |
+| BingX | `POST open-api.bingx.com/openApi/spot/v1/trade/order` | `GET /openApi/spot/v1/trade/cancel` | HMAC-SHA256 + `X-BX-APIKEY` |
+| LBank | `POST api.lbkex.com/v2/supplement/create_order.do` | `POST /v2/supplement/cancel_order.do` | HMAC-SHA256 form-encoded |
 
 ---
 
@@ -299,8 +305,8 @@ MEXC's JSON depth channels are geo-blocked. The protobuf `aggre.depth` channel i
 ### Aggregator / Render Isolation
 The aggregator is the only writer to `SharedDisplay`. The render thread calls `snapshot()` once per frame — a lock-guarded copy — and then draws without holding any lock.
 
-### Non-Blocking Order Placement
-Each "Place Limit Order" click dispatches the REST call via `std::async(std::launch::async)`. The UI polls the `std::future` with a zero-timeout `wait_for` each frame. The GUI never stalls.
+### Non-Blocking Order Placement & Cancellation
+Each "Place Limit Order" or "Cancel" click dispatches the REST call via `std::async(std::launch::async)`. The UI polls the returned `std::future` with a zero-timeout `wait_for` each frame. The GUI never stalls.
 
 ### Clean Shutdown
 A global `std::atomic<bool> g_running` is set to `false` when the ImGui window is closed. All exchange threads, the aggregator, and the trade manager observe this flag and exit before `main()` returns.
@@ -314,9 +320,9 @@ A global `std::atomic<bool> g_running` is set to `false` when the ImGui window i
 2. Add 2 lines in `main.cpp` — construct handler + `set_shared_trades(&shared_trades)` + thread
 3. Add source file to `Makefile`
 
-**Order placement:**
-1. Create `newexchange/newexchange_trader.h/.cpp` — implement `place_limit_order()`
-2. Add env var load + dispatch entry in `trading/trade_manager.h`
+**Order placement & cancellation:**
+1. Create `newexchange/newexchange_trader.h/.cpp` — implement `place_limit_order()` and `cancel_limit_order()`
+2. Add env var load + dispatch entries in `trading/trade_manager.h` (`submit()` and `cancel()`)
 3. Add source file to `Makefile`
 
 Zero changes to core infrastructure.
@@ -325,5 +331,4 @@ Zero changes to core infrastructure.
 
 ## TODO
 - Price spread alerts / notifications
-- Order cancellation and open-orders panel
 - Configurable number of depth levels (currently fixed at 5)

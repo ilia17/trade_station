@@ -76,11 +76,12 @@ inline std::string url_encode(const std::string& s) {
 // ── Synchronous HTTPS POST ────────────────────────────────────────────────────
 // Returns the response body. Throws std::runtime_error on failure.
 
-inline std::string https_post(
-    const std::string& host,
-    const std::string& target,
-    const std::string& body,
-    const std::vector<std::pair<std::string,std::string>>& headers)
+inline std::string https_request(
+    http::verb                                                  method,
+    const std::string&                                          host,
+    const std::string&                                          target,
+    const std::string&                                          body,
+    const std::vector<std::pair<std::string,std::string>>&      headers)
 {
     net::io_context ioc;
     ssl::context    ctx(ssl::context::tlsv12_client);
@@ -97,9 +98,9 @@ inline std::string https_post(
     beast::get_lowest_layer(stream).connect(results);
     stream.handshake(ssl::stream_base::client);
 
-    http::request<http::string_body> req{http::verb::post, target, 11};
-    req.set(http::field::host,         host);
-    req.set(http::field::user_agent,   "TradeStation/1.0");
+    http::request<http::string_body> req{method, target, 11};
+    req.set(http::field::host,       host);
+    req.set(http::field::user_agent, "TradeStation/1.0");
     for (auto& [k, v] : headers)
         req.set(k, v);
     req.body() = body;
@@ -112,9 +113,31 @@ inline std::string https_post(
     http::read(stream, buf, res);
 
     beast::error_code ec;
-    stream.shutdown(ec); // ignore graceful-close errors
-
+    stream.shutdown(ec);
     return res.body();
+}
+
+inline std::string https_get(
+    const std::string& host, const std::string& target,
+    const std::vector<std::pair<std::string,std::string>>& headers)
+{
+    return https_request(http::verb::get, host, target, "", headers);
+}
+
+inline std::string https_post(
+    const std::string& host, const std::string& target,
+    const std::string& body,
+    const std::vector<std::pair<std::string,std::string>>& headers)
+{
+    return https_request(http::verb::post, host, target, body, headers);
+}
+
+inline std::string https_delete(
+    const std::string& host, const std::string& target,
+    const std::vector<std::pair<std::string,std::string>>& headers,
+    const std::string& body = "")
+{
+    return https_request(http::verb::delete_, host, target, body, headers);
 }
 
 #endif

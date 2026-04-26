@@ -33,7 +33,6 @@ OrderResult LBankTrader::place_limit_order(Side side, const std::string& symbol,
             sign_input << k << "=" << url_encode(v) << "&";
         std::string si = sign_input.str();
         if (!si.empty()) si.pop_back();
-
         params["sign"] = hmac_sha256_hex(api_secret_, si);
 
         std::ostringstream body;
@@ -52,6 +51,47 @@ OrderResult LBankTrader::place_limit_order(Side side, const std::string& symbol,
                 ? j["order_id"].get<std::string>() : "";
             return {true, oid, "OK"};
         }
+        std::string msg = j.contains("error_code")
+            ? "error_code=" + j["error_code"].dump() : resp;
+        return {false, "", msg};
+    } catch (const std::exception& e) {
+        return {false, "", e.what()};
+    }
+}
+
+OrderResult LBankTrader::cancel_limit_order(const std::string& symbol,
+                                             const std::string& order_id) {
+    try {
+        long long ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        std::map<std::string,std::string> params;
+        params["api_key"]          = api_key_;
+        params["symbol"]           = symbol;
+        params["orderId"]          = order_id;
+        params["timestamp"]        = std::to_string(ts);
+        params["signature_method"] = "HmacSHA256";
+
+        std::ostringstream sign_input;
+        for (auto& [k, v] : params)
+            sign_input << k << "=" << url_encode(v) << "&";
+        std::string si = sign_input.str();
+        if (!si.empty()) si.pop_back();
+        params["sign"] = hmac_sha256_hex(api_secret_, si);
+
+        std::ostringstream body;
+        for (auto& [k, v] : params)
+            body << url_encode(k) << "=" << url_encode(v) << "&";
+        std::string body_str = body.str();
+        if (!body_str.empty()) body_str.pop_back();
+
+        std::string resp = https_post("api.lbkex.com",
+            "/v2/supplement/cancel_order.do", body_str,
+            {{"Content-Type", "application/x-www-form-urlencoded"}});
+
+        auto j = json::parse(resp);
+        if (j.contains("result") && j["result"] == "true")
+            return {true, order_id, "Cancelled"};
         std::string msg = j.contains("error_code")
             ? "error_code=" + j["error_code"].dump() : resp;
         return {false, "", msg};
