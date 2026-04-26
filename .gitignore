@@ -73,7 +73,7 @@ Desktop.ini
 .LSOverride
 
 # Generated Protobuf files (auto-generated from mexc-proto submodule)
-exchanges/mexc/proto/*.pb.cc
-exchanges/mexc/proto/*.pb.h
-exchanges/mexc/proto/*.proto
+proto/*.pb.cc
+proto/*.pb.h
+proto/*.proto
 
