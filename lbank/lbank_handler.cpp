@@ -211,6 +211,14 @@ void LBankHandler::parse_trade(const json& j) {
         else if (t.contains("volume")) tr.qty = to_d(t["volume"]);
         tr.is_buy = t.contains("direction") &&
                     t["direction"].get<std::string>() == "buy";
+        // LBank V2 trade timestamp field is "TS" (ms); fall back to local clock
+        if      (t.contains("TS") && t["TS"].is_number())
+            tr.time_ms = t["TS"].get<long long>();
+        else if (t.contains("ts") && t["ts"].is_number())
+            tr.time_ms = t["ts"].get<long long>();
+        else
+            tr.time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
         shared_trades->add(name.c_str(), tr);
     };
     // "trade" field may be object or array

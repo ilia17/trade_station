@@ -113,11 +113,12 @@ static void draw_trades_table(int idx, const OrderBookUpdate& ex,
     float tbl_h = row_h * 10.f + ImGui::GetStyle().ScrollbarSize;
 
     char tid[32]; snprintf(tid, sizeof(tid), "##tr%d", idx);
-    if (!ImGui::BeginTable(tid, 3, tfl, ImVec2(-1, tbl_h))) return;
+    if (!ImGui::BeginTable(tid, 4, tfl, ImVec2(-1, tbl_h))) return;
 
     ImGui::TableSetupColumn("Price",  ImGuiTableColumnFlags_WidthStretch, 2.0f);
     ImGui::TableSetupColumn("Qty",    ImGuiTableColumnFlags_WidthStretch, 1.6f);
     ImGui::TableSetupColumn("Side",   ImGuiTableColumnFlags_WidthFixed,   36.f);
+    ImGui::TableSetupColumn("Time",   ImGuiTableColumnFlags_WidthFixed,   58.f);
     ImGui::TableHeadersRow();
 
     for (int i = 0; i < t_count; i++) {
@@ -136,6 +137,17 @@ static void draw_trades_table(int idx, const OrderBookUpdate& ex,
 
         ImGui::TableSetColumnIndex(2);
         ImGui::TextColored(col, "%s", t.is_buy ? "BUY" : "SELL");
+
+        ImGui::TableSetColumnIndex(3);
+        if (t.time_ms > 0) {
+            std::time_t sec = (std::time_t)(t.time_ms / 1000);
+            std::tm* tm_info = std::localtime(&sec);
+            char tbuf[16];
+            std::strftime(tbuf, sizeof(tbuf), "%H:%M:%S", tm_info);
+            ImGui::TextDisabled("%s", tbuf);
+        } else {
+            ImGui::TextDisabled("--");
+        }
     }
     if (t_count == 0)
         ImGui::TextDisabled("  waiting...");
@@ -248,12 +260,6 @@ static std::string exchange_symbol(const std::string& exchange) {
     return s;
 }
 
-// Kept for Apply All / Cancel All buttons that iterate by panel index
-static std::string panel_symbol(int idx) {
-    // idx maps to exchange name via k_panels[]
-    return exchange_symbol(k_panels[idx].name);
-}
-
 static void draw_open_orders(int idx, const OrderBookUpdate& ex,
                              TradeManager& trader) {
     OrderFormState& f = g_forms[idx];
@@ -289,6 +295,28 @@ static void draw_open_orders(int idx, const OrderBookUpdate& ex,
 
     ImGui::Spacing();
     ImGui::SeparatorText("Open Orders");
+
+    {
+        bool has_k       = trader.has_keys(ex.exchange);
+        bool can_cancel  = has_k && !f.cancelling_all;
+        char ca_id[32];  snprintf(ca_id, sizeof(ca_id), "Cancel All##ca%d", idx);
+        if (!can_cancel) ImGui::BeginDisabled();
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.08f, 0.08f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f, 0.12f, 0.12f, 1.f));
+        if (ImGui::Button(ca_id, ImVec2(-1, 0)) && can_cancel) {
+            f.cancelling_all    = true;
+            f.cancel_all_fut    = trader.cancel_all(ex.exchange,
+                                      exchange_symbol(ex.exchange));
+        }
+        ImGui::PopStyleColor(2);
+        if (!can_cancel) {
+            ImGui::EndDisabled();
+            if (!has_k && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("No API key for %s", ex.exchange);
+        }
+        if (f.cancelling_all)
+            ImGui::TextDisabled("  Cancelling all...");
+    }
 
     // Poll cancel futures
     for (auto& o : f.orders) {
@@ -540,23 +568,8 @@ void render_run(SharedDisplay& display, SharedTrades& shared_trades,
             }
         }
         ImGui::SameLine();
-        // Cancel All — fires cancel for every non-cancelled order across all panels
-        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f,0.08f,0.08f,1.f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f,0.12f,0.12f,1.f));
-        if (ImGui::Button("Cancel All")) {
-            for (int i = 0; i < count; i++) {
-                if (!g_forms[i].cancelling_all &&
-                    trader.has_keys(books[i].exchange)) {
-                    g_forms[i].cancelling_all = true;
-                    g_forms[i].cancel_all_fut = trader.cancel_all(
-                        books[i].exchange,
-                        exchange_symbol(books[i].exchange));
-                }
-            }
-        }
-        ImGui::PopStyleColor(2);
-        ImGui::SameLine();
         ImGui::TextDisabled("(click a price level to fill price + qty)");
+        
 
         ImGui::Separator();
 
