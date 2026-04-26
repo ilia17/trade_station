@@ -1,7 +1,3 @@
-# ── Build output ─────────────────────────────────────────────────────────────
-orderbook_stream
-build/
-cmake-build-*/
 
 # ── Compiled objects / libraries ─────────────────────────────────────────────
 *.o
