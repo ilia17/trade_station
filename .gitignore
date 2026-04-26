@@ -1,4 +1,79 @@
-main
-main.exe
-.env
-env
+# Build directories
+build/
+cmake-build-*/
+
+# Compiled Object files
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.out
+*.app
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Data directory - SENSITIVE!
+data/api_keys.json
+data/bot_configs.json
+data/*.json
+data/*.db
+
+# API Keys and SSH Keys (NEVER commit these!)
+*api_key*
+*api_secret*
+*.env
+.env.*
+*.pem
+*.key
+*id_rsa*
+*id_ed25519*
+*.sshid*
+
+# Backup files
+*.bak
+*.backup
+
+# Temporary files
+*.tmp
+.cache/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+.directory
+.Trash-*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Generated Protobuf files (auto-generated from mexc-proto submodule)
+exchanges/mexc/proto/*.pb.cc
+exchanges/mexc/proto/*.pb.h
+exchanges/mexc/proto/*.proto
+
