@@ -79,3 +79,67 @@ OrderResult GateTrader::cancel_limit_order(const std::string& symbol,
         return {false, "", e.what()};
     }
 }
+
+OrderResult GateTrader::cancel_all_orders(const std::string& symbol) {
+    try {
+        std::string ts = std::to_string(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+
+        std::string url        = "/api/v4/spot/orders";
+        std::string query      = "currency_pair=" + symbol;
+        std::string sign_input = "DELETE\n" + url + "\n" + query + "\n" +
+                                 sha512_hex("") + "\n" + ts;
+        std::string sig = hmac_sha512_hex(api_secret_, sign_input);
+
+        std::string resp = https_delete("api.gateio.ws",
+            url + "?" + query,
+            {{"KEY",       api_key_},
+             {"SIGN",      sig},
+             {"Timestamp", ts},
+             {"Accept",    "application/json"}});
+
+        if (resp.empty()) return {true, "", "All cancelled"};
+        auto j = json::parse(resp);
+        if (j.is_array()) return {true, "", "All cancelled"};
+        std::string msg = j.contains("message") ? j["message"].get<std::string>() : resp;
+        return {false, "", msg};
+    } catch (const std::exception& e) {
+        return {false, "", e.what()};
+    }
+}
+
+std::vector<PlacedOrder> GateTrader::fetch_open_orders(const std::string& symbol) {
+    try {
+        std::string ts = std::to_string(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        std::string url   = "/api/v4/spot/orders";
+        std::string query = "currency_pair=" + symbol + "&status=open";
+        std::string sign_input = "GET\n" + url + "\n" + query + "\n" +
+                                 sha512_hex("") + "\n" + ts;
+        std::string sig = hmac_sha512_hex(api_secret_, sign_input);
+
+        std::string resp = https_get("api.gateio.ws", url + "?" + query,
+            {{"KEY",       api_key_},
+             {"SIGN",      sig},
+             {"Timestamp", ts},
+             {"Accept",    "application/json"}});
+
+        auto j = json::parse(resp);
+        std::vector<PlacedOrder> out;
+        if (!j.is_array()) return out;
+        for (auto& item : j) {
+            PlacedOrder o;
+            o.exchange = "Gate";
+            o.symbol   = symbol;
+            o.order_id = item.value("id", "");
+            std::string side = item.value("side", "buy");
+            o.side = (side == "buy") ? Side::BUY : Side::SELL;
+            try { o.price = std::stod(item.value("price",  "0")); } catch(...) {}
+            try { o.qty   = std::stod(item.value("amount", "0")); } catch(...) {}
+            if (!o.order_id.empty()) out.push_back(std::move(o));
+        }
+        return out;
+    } catch(...) { return {}; }
+}

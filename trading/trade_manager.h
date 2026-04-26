@@ -4,6 +4,8 @@
 #include <string>
 #include <memory>
 #include <future>
+#include <vector>
+#include <chrono>
 #include <cstdlib>
 
 #include "order.h"
@@ -56,6 +58,34 @@ public:
         });
     }
 
+    // Non-blocking: fetch all open orders for a symbol on one exchange.
+    std::future<std::vector<PlacedOrder>> fetch_orders(const std::string& exchange,
+                                                        const std::string& symbol) {
+        return std::async(std::launch::async, [=, this]() -> std::vector<PlacedOrder> {
+            try {
+                if (exchange == "MEXC"  && mexc_)  return mexc_->fetch_open_orders(symbol);
+                if (exchange == "Gate"  && gate_)  return gate_->fetch_open_orders(symbol);
+                if (exchange == "BingX" && bingx_) return bingx_->fetch_open_orders(symbol);
+                if (exchange == "LBank" && lbank_) return lbank_->fetch_open_orders(symbol);
+            } catch(...) {}
+            return {};
+        });
+    }
+
+    // Non-blocking bulk cancel: one API call cancels all open orders for the symbol.
+    std::future<OrderResult> cancel_all(const std::string& exchange,
+                                        const std::string& symbol) {
+        return std::async(std::launch::async, [=, this]() -> OrderResult {
+            try {
+                if (exchange == "MEXC"  && mexc_)  return mexc_->cancel_all_orders(symbol);
+                if (exchange == "Gate"  && gate_)  return gate_->cancel_all_orders(symbol);
+                if (exchange == "BingX" && bingx_) return bingx_->cancel_all_orders(symbol);
+                if (exchange == "LBank" && lbank_) return lbank_->cancel_all_orders(symbol);
+            } catch(...) {}
+            return {false, "", "No trader for " + exchange};
+        });
+    }
+
     // Non-blocking cancel: returns a future with the result.
     std::future<OrderResult> cancel(const std::string& exchange,
                                     const std::string& symbol,
@@ -68,6 +98,8 @@ public:
             return {false, "", "No trader for " + exchange};
         });
     }
+
+private:
     std::unique_ptr<MexcTrader>  mexc_;
     std::unique_ptr<GateTrader>  gate_;
     std::unique_ptr<BingXTrader> bingx_;

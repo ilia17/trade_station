@@ -24,7 +24,6 @@ OrderResult BingXTrader::place_limit_order(Side side, const std::string& symbol,
            << "&price="    << std::fixed << std::setprecision(8) << price
            << "&timeInForce=GTC"
            << "&timestamp=" << ts;
-
         std::string params = ps.str();
         params += "&signature=" + hmac_sha256_hex(api_secret_, params);
 
@@ -68,4 +67,57 @@ OrderResult BingXTrader::cancel_limit_order(const std::string& symbol,
     } catch (const std::exception& e) {
         return {false, "", e.what()};
     }
+}
+
+OrderResult BingXTrader::cancel_all_orders(const std::string& symbol) {
+    try {
+        long long ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        std::string qs = "symbol=" + symbol + "&timestamp=" + std::to_string(ts);
+        qs += "&signature=" + hmac_sha256_hex(api_secret_, qs);
+
+        std::string resp = https_delete("open-api.bingx.com",
+            "/openApi/spot/v1/trade/allOpenOrders?" + qs,
+            {{"X-BX-APIKEY",  api_key_},
+             {"Content-Type", "application/json"}});
+
+        if (resp.empty()) return {true, "", "All cancelled"};
+        auto j = json::parse(resp);
+        if (j.contains("code") && j["code"].get<int>() == 0)
+            return {true, "", "All cancelled"};
+        std::string msg = j.contains("msg") ? j["msg"].get<std::string>() : resp;
+        return {false, "", msg};
+    } catch (const std::exception& e) {
+        return {false, "", e.what()};
+    }
+}
+
+std::vector<PlacedOrder> BingXTrader::fetch_open_orders(const std::string& symbol) {
+    try {
+        long long ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        std::string qs = "symbol=" + symbol + "&timestamp=" + std::to_string(ts);
+        qs += "&signature=" + hmac_sha256_hex(api_secret_, qs);
+
+        std::string resp = https_get("open-api.bingx.com",
+            "/openApi/spot/v1/trade/openOrders?" + qs,
+            {{"X-BX-APIKEY", api_key_}});
+
+        auto j = json::parse(resp);
+        std::vector<PlacedOrder> out;
+        if (!j.contains("data") || !j["data"].contains("orders")) return out;
+        for (auto& item : j["data"]["orders"]) {
+            PlacedOrder o;
+            o.exchange = "BingX";
+            o.symbol   = symbol;
+            o.order_id = item.contains("orderId")
+                ? std::to_string(item["orderId"].get<long long>()) : "";
+            std::string side = item.value("side", "BUY");
+            o.side = (side == "BUY") ? Side::BUY : Side::SELL;
+            try { o.price = std::stod(item.value("price",    "0")); } catch(...) {}
+            try { o.qty   = std::stod(item.value("quantity", "0")); } catch(...) {}
+            if (!o.order_id.empty()) out.push_back(std::move(o));
+        }
+        return out;
+    } catch(...) { return {}; }
 }

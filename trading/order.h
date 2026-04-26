@@ -27,6 +27,7 @@ struct OrderResult {
 // A successfully placed order tracked in the UI
 struct PlacedOrder {
     std::string order_id;
+    std::string exchange;   // "MEXC" | "Gate" | "BingX" | "LBank"
     std::string symbol;
     Side        side{Side::BUY};
     double      price{0};
@@ -46,11 +47,15 @@ struct OrderFormState {
     char price_buf[32]{};
     char qty_buf[32]{};
 
-    std::future<OrderResult>  pending;
-    OrderStatus               status{OrderStatus::IDLE};
-    std::string               status_msg;
+    std::future<OrderResult>              pending;
+    OrderStatus                           status{OrderStatus::IDLE};
+    std::string                           status_msg;
 
-    std::vector<PlacedOrder>  orders;   // open orders for this panel
+    std::vector<PlacedOrder>              orders;   // open orders for this panel
+    std::future<std::vector<PlacedOrder>> fetch_fut;
+    bool                                  fetching{false};
+    std::future<OrderResult>              cancel_all_fut;
+    bool                                  cancelling_all{false};
 };
 
 #endif

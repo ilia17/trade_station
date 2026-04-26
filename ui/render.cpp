@@ -158,6 +158,7 @@ static void draw_order_form(int idx, const OrderBookUpdate& ex,
         if (r.success && !r.order_id.empty()) {
             PlacedOrder po;
             po.order_id = r.order_id;
+            po.exchange = ex.exchange;
             po.symbol   = ex.symbol;
             po.side     = f.side == 0 ? Side::BUY : Side::SELL;
             try { po.price = std::stod(f.price_buf); } catch (...) {}
@@ -231,10 +232,60 @@ static void draw_order_form(int idx, const OrderBookUpdate& ex,
 
 // ── Open orders table (placed this session, with Cancel button) ───────────────
 
+// Per-panel exchange metadata used for fetch
+struct PanelMeta { const char* name; };
+static const PanelMeta k_panels[4] = {{"MEXC"}, {"Gate"}, {"BingX"}, {"LBank"}};
+
+// Build exchange-specific symbol string from base/quote for a given exchange name
+static std::string exchange_symbol(const std::string& exchange) {
+    std::string b(g_base), q(g_quote);
+    if (exchange == "MEXC")  return b + q;                    // BTCUSDT
+    if (exchange == "Gate")  return b + "_" + q;              // BTC_USDT
+    if (exchange == "BingX") return b + "-" + q;              // BTC-USDT
+    // LBank: btc_usdt (lowercase)
+    std::string s = b + "_" + q;
+    for (char& c : s) c = (char)tolower((unsigned char)c);
+    return s;
+}
+
+// Kept for Apply All / Cancel All buttons that iterate by panel index
+static std::string panel_symbol(int idx) {
+    // idx maps to exchange name via k_panels[]
+    return exchange_symbol(k_panels[idx].name);
+}
+
 static void draw_open_orders(int idx, const OrderBookUpdate& ex,
                              TradeManager& trader) {
     OrderFormState& f = g_forms[idx];
-    if (f.orders.empty()) return;
+
+    // Poll fetch future — merge results (avoid duplicate order_ids)
+    if (f.fetch_fut.valid() &&
+        f.fetch_fut.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        auto fetched = f.fetch_fut.get();
+        f.fetching = false;
+        for (auto& fo : fetched) {
+            bool dup = false;
+            for (auto& existing : f.orders)
+                if (existing.order_id == fo.order_id) { dup = true; break; }
+            if (!dup) f.orders.push_back(std::move(fo));
+        }
+    }
+
+    // Poll cancel-all future — clear list on success
+    if (f.cancel_all_fut.valid() &&
+        f.cancel_all_fut.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        OrderResult r = f.cancel_all_fut.get();
+        f.cancelling_all = false;
+        if (r.success) f.orders.clear();
+    }
+
+    if (f.orders.empty()) {
+        if (f.fetching)
+            ImGui::TextDisabled("  Fetching open orders...");
+        if (f.cancelling_all)
+            ImGui::TextDisabled("  Cancelling all...");
+        return;
+    }
 
     ImGui::Spacing();
     ImGui::SeparatorText("Open Orders");
@@ -295,18 +346,25 @@ static void draw_open_orders(int idx, const OrderBookUpdate& ex,
         } else if (o.cancelling) {
             ImGui::TextDisabled("Cancelling..");
         } else {
+            bool has_k = trader.has_keys(o.exchange);
             char btn_id[40];
             snprintf(btn_id, sizeof(btn_id), "Cancel##%s", o.order_id.c_str());
+            if (!has_k) ImGui::BeginDisabled();
             ImGui::PushStyleColor(ImGuiCol_Button,
                                   ImVec4(0.45f, 0.08f, 0.08f, 1.f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                                   ImVec4(0.65f, 0.12f, 0.12f, 1.f));
-            if (ImGui::Button(btn_id, ImVec2(-1, 0))) {
+            if (ImGui::Button(btn_id, ImVec2(-1, 0)) && has_k) {
                 o.cancelling = true;
                 o.cancel_fut = std::make_shared<std::future<OrderResult>>(
-                    trader.cancel(ex.exchange, o.symbol, o.order_id));
+                    trader.cancel(o.exchange, o.symbol, o.order_id));
             }
             ImGui::PopStyleColor(2);
+            if (!has_k) {
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("No API key for %s", o.exchange.c_str());
+            }
         }
     }
     ImGui::EndTable();
@@ -412,6 +470,7 @@ void render_run(SharedDisplay& display, SharedTrades& shared_trades,
     ImGui_ImplOpenGL3_Init("#version 130");
 
     bool window_open = true;
+    bool initial_fetch_done = false;
     while (window_open) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -430,6 +489,18 @@ void render_run(SharedDisplay& display, SharedTrades& shared_trades,
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        // One-shot: fetch open orders for the default symbol on first frame
+        if (!initial_fetch_done) {
+            initial_fetch_done = true;
+            for (int i = 0; i < count; i++) {
+                if (trader.has_keys(books[i].exchange)) {
+                    g_forms[i].fetch_fut = trader.fetch_orders(books[i].exchange,
+                                              exchange_symbol(books[i].exchange));
+                    g_forms[i].fetching = true;
+                }
+            }
+        }
 
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->Pos);
@@ -459,7 +530,31 @@ void render_run(SharedDisplay& display, SharedTrades& shared_trades,
             for (int i = 0; i < 4; i++) g_forms[i] = OrderFormState{};
             for (int i = 0; i < 4; i++)
                 if (handlers[i]) handlers[i]->change_symbol(base, quote);
+            // Fetch open orders for the new symbol from each connected exchange
+            for (int i = 0; i < count; i++) {
+                if (trader.has_keys(books[i].exchange)) {
+                    g_forms[i].fetch_fut = trader.fetch_orders(books[i].exchange,
+                                              exchange_symbol(books[i].exchange));
+                    g_forms[i].fetching = true;
+                }
+            }
         }
+        ImGui::SameLine();
+        // Cancel All — fires cancel for every non-cancelled order across all panels
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f,0.08f,0.08f,1.f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f,0.12f,0.12f,1.f));
+        if (ImGui::Button("Cancel All")) {
+            for (int i = 0; i < count; i++) {
+                if (!g_forms[i].cancelling_all &&
+                    trader.has_keys(books[i].exchange)) {
+                    g_forms[i].cancelling_all = true;
+                    g_forms[i].cancel_all_fut = trader.cancel_all(
+                        books[i].exchange,
+                        exchange_symbol(books[i].exchange));
+                }
+            }
+        }
+        ImGui::PopStyleColor(2);
         ImGui::SameLine();
         ImGui::TextDisabled("(click a price level to fill price + qty)");
 

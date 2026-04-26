@@ -11,6 +11,8 @@ public:
                                   double price, double qty);
     OrderResult cancel_limit_order(const std::string& symbol,
                                    const std::string& order_id);
+    OrderResult cancel_all_orders(const std::string& symbol);
+    std::vector<PlacedOrder> fetch_open_orders(const std::string& symbol);
 private:
     std::string api_key_;
     std::string api_secret_;
