@@ -1,0 +1,66 @@
+#ifndef TRADE_MANAGER_H
+#define TRADE_MANAGER_H
+
+#include <string>
+#include <memory>
+#include <future>
+#include <cstdlib>
+
+#include "order.h"
+#include "../mexc/mexc_trader.h"
+#include "../gate/gate_trader.h"
+#include "../bingx/bingx_trader.h"
+#include "../lbank/lbank_trader.h"
+
+// Loads API keys from environment variables at construction.
+// Exposes has_keys(exchange) and async submit().
+class TradeManager {
+public:
+    TradeManager() {
+        auto load = [](const char* k, const char* s) -> std::pair<std::string,std::string> {
+            const char* key = std::getenv(k);
+            const char* sec = std::getenv(s);
+            return {key ? key : "", sec ? sec : ""};
+        };
+
+        auto [mk, ms] = load("MEXC_API_KEY",  "MEXC_API_SECRET");
+        auto [gk, gs] = load("GATE_API_KEY",  "GATE_API_SECRET");
+        auto [bk, bs] = load("BINGX_API_KEY", "BINGX_API_SECRET");
+        auto [lk, ls] = load("LBANK_API_KEY", "LBANK_API_SECRET");
+
+        if (!mk.empty() && !ms.empty()) mexc_  = std::make_unique<MexcTrader>(mk, ms);
+        if (!gk.empty() && !gs.empty()) gate_  = std::make_unique<GateTrader>(gk, gs);
+        if (!bk.empty() && !bs.empty()) bingx_ = std::make_unique<BingXTrader>(bk, bs);
+        if (!lk.empty() && !ls.empty()) lbank_ = std::make_unique<LBankTrader>(lk, ls);
+    }
+
+    bool has_keys(const std::string& exchange) const {
+        if (exchange == "MEXC")  return mexc_  != nullptr;
+        if (exchange == "Gate")  return gate_  != nullptr;
+        if (exchange == "BingX") return bingx_ != nullptr;
+        if (exchange == "LBank") return lbank_ != nullptr;
+        return false;
+    }
+
+    // Non-blocking: spawns a thread and returns a future with the result.
+    std::future<OrderResult> submit(const std::string& exchange,
+                                    Side side,
+                                    const std::string& symbol,
+                                    double price, double qty) {
+        return std::async(std::launch::async, [=, this]() -> OrderResult {
+            if (exchange == "MEXC"  && mexc_)  return mexc_->place_limit_order(side, symbol, price, qty);
+            if (exchange == "Gate"  && gate_)  return gate_->place_limit_order(side, symbol, price, qty);
+            if (exchange == "BingX" && bingx_) return bingx_->place_limit_order(side, symbol, price, qty);
+            if (exchange == "LBank" && lbank_) return lbank_->place_limit_order(side, symbol, price, qty);
+            return {false, "", "No trader for " + exchange};
+        });
+    }
+
+private:
+    std::unique_ptr<MexcTrader>  mexc_;
+    std::unique_ptr<GateTrader>  gate_;
+    std::unique_ptr<BingXTrader> bingx_;
+    std::unique_ptr<LBankTrader> lbank_;
+};
+
+#endif

@@ -10,6 +10,7 @@
 #include "../scr/exchange.h"
 #include "../proto/PushDataV3ApiWrapper.pb.h"
 #include "../proto/PublicAggreDepthsV3Api.pb.h"
+#include "../proto/PublicAggreDealsV3Api.pb.h"
 
 using json = nlohmann::json;
 
@@ -41,6 +42,11 @@ private:
     // Apply incremental depth deltas and build a top-5 snapshot
     OrderBookUpdate apply_depth(const PublicAggreDepthsV3Api& depths);
 
+    // True while we wait for the subscription ack after a symbol switch —
+    // binary frames arriving in this window are old-symbol leftovers and
+    // must be discarded.
+    std::atomic<bool> awaiting_sub_ack{false};
+
 public:
     MexcHandler(Disruptor<1024>& disruptor);
 
@@ -48,6 +54,10 @@ public:
     void subscribe()  override;
     void disconnect() override;
     void run()        override;
+    void change_symbol(const std::string& base, const std::string& quote) override;
+
+    void subscribe_trades();
+    void parse_trade_pb(const PublicAggreDealsV3Api& deals);
 };
 
 #endif

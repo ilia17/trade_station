@@ -41,7 +41,7 @@ void MexcHandler::on_open(websocketpp::connection_hdl hdl) {
     running.store(true, std::memory_order_release);
     std::cout << "[MEXC] Connected\n";
     subscribe();
-    schedule_ping();
+    subscribe_trades();
 }
 
 void MexcHandler::schedule_ping() {
@@ -58,10 +58,10 @@ void MexcHandler::subscribe() {
     // Protobuf channel — unblocked on MEXC, 100ms cadence
     json sub = {
         {"method", "SUBSCRIPTION"},
-        {"params", {"spot@public.aggre.depth.v3.api.pb@100ms@BTCUSDT"}}
+        {"params", {"spot@public.aggre.depth.v3.api.pb@100ms@" + symbol}}
     };
     client.send(connection, sub.dump(), websocketpp::frame::opcode::text);
-    std::cout << "[MEXC] Subscribed to BTCUSDT protobuf depth stream\n";
+    std::cout << "[MEXC] Subscribed to " << symbol << " protobuf depth stream\n";
 }
 
 void MexcHandler::on_message(websocketpp::connection_hdl hdl,
@@ -77,12 +77,31 @@ void MexcHandler::on_message(websocketpp::connection_hdl hdl,
                 client.send(hdl, pong.dump(), websocketpp::frame::opcode::text);
                 return;
             }
+            if (j.contains("msg") && j["msg"].is_string()) {
+                std::string ack_msg = j["msg"].get<std::string>();
+                // Only the depth protobuf ack clears the transition gate
+                std::string depth_ch = "spot@public.aggre.depth.v3.api.pb@100ms@" + symbol;
+                if (ack_msg.find(depth_ch) != std::string::npos) {
+                    bids_book.clear();
+                    asks_book.clear();
+                    awaiting_sub_ack.store(false, std::memory_order_release);
+                }
+            }
+            // Deals channel is blocked in JSON path — handled above
+            // Keep this as a no-op guard in case MEXC ever sends JSON deals.
+            if (j.contains("c") && j["c"].is_string() &&
+                j["c"].get<std::string>().find("deals") != std::string::npos) {
+                return; // handled in binary path
+            }
             std::cout << "[MEXC] server msg: " << raw << "\n";
         } catch (...) {}
         return;
     }
 
-    // Binary frame — decode as PushDataV3ApiWrapper protobuf
+    // Binary frame — decode as PushDataV3ApiWrapper protobuf.
+    // Discard while a symbol switch is in progress (old-symbol leftovers).
+    if (awaiting_sub_ack.load(std::memory_order_acquire)) return;
+
     try {
         PushDataV3ApiWrapper wrapper;
         if (!wrapper.ParseFromString(raw)) {
@@ -95,6 +114,10 @@ void MexcHandler::on_message(websocketpp::connection_hdl hdl,
             if (update.bid_count > 0 || update.ask_count > 0) {
                 disruptor.publish(update);
             }
+        }
+
+        if (wrapper.has_publicaggredeals()) {
+            parse_trade_pb(wrapper.publicaggredeals());
         }
     } catch (const std::exception& e) {
         std::cout << "[MEXC] error: " << e.what() << "\n";
@@ -123,8 +146,8 @@ OrderBookUpdate MexcHandler::apply_depth(const PublicAggreDepthsV3Api& depths) {
 
     // Build a top-5 snapshot from the sorted maps.
     OrderBookUpdate update;
-    strncpy(update.exchange, "MEXC",    sizeof(update.exchange) - 1);
-    strncpy(update.symbol,   "BTCUSDT", sizeof(update.symbol)   - 1);
+    strncpy(update.exchange, "MEXC",          sizeof(update.exchange) - 1);
+    strncpy(update.symbol,   symbol.c_str(),  sizeof(update.symbol)   - 1);
     update.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
@@ -175,4 +198,57 @@ void MexcHandler::disconnect() {
 void MexcHandler::run() {
     connect();
     client.run();
+}
+
+void MexcHandler::subscribe_trades() {
+    // Channel: spot@public.aggre.deals.v3.api.pb@100ms@SYMBOL (JSON text frame)
+    json sub = {
+        {"method", "SUBSCRIPTION"},
+        {"params", {"spot@public.aggre.deals.v3.api.pb@100ms@" + symbol}}
+    };
+    client.send(connection, sub.dump(), websocketpp::frame::opcode::text);
+}
+
+// Called from on_message binary branch
+void MexcHandler::parse_trade_pb(const PublicAggreDealsV3Api& deals) {
+    if (!shared_trades) return;
+    for (int i = 0; i < deals.deals_size(); i++) {
+        const auto& d = deals.deals(i);
+        Trade t;
+        try { t.price = std::stod(d.price());    } catch (...) {}
+        try { t.qty   = std::stod(d.quantity()); } catch (...) {}
+        t.is_buy  = (d.tradetype() == 1);   // 1=buy, 2=sell
+        t.time_ms = d.time();
+        shared_trades->add(name.c_str(), t);
+    }
+}
+
+void MexcHandler::change_symbol(const std::string& base, const std::string& quote) {
+    if (!running.load()) return;
+    std::string new_sym = base + quote;  // MEXC: no separator, e.g. ETHUSDT
+    // Unsubscribe old
+    json unsub = {
+        {"method", "UNSUBSCRIPTION"},
+        {"params", {"spot@public.aggre.depth.v3.api.pb@100ms@" + symbol}}
+    };
+    websocketpp::lib::error_code ec;
+    client.send(connection, unsub.dump(), websocketpp::frame::opcode::text, ec);
+    // Gate: discard all binary frames until the new subscription ack arrives
+    awaiting_sub_ack.store(true, std::memory_order_release);
+    bids_book.clear();
+    asks_book.clear();
+    symbol = new_sym;
+    // Subscribe new
+    json sub = {
+        {"method", "SUBSCRIPTION"},
+        {"params", {"spot@public.aggre.depth.v3.api.pb@100ms@" + symbol}}
+    };
+    client.send(connection, sub.dump(), websocketpp::frame::opcode::text, ec);
+    // Resubscribe trades channel (JSON aggre deals)
+    json tsub = {
+        {"method", "SUBSCRIPTION"},
+        {"params", {"spot@public.aggre.deals.v3.api.pb@100ms@" + symbol}}
+    };
+    client.send(connection, tsub.dump(), websocketpp::frame::opcode::text, ec);
+    std::cout << "[MEXC] Resubscribed to " << symbol << " (awaiting ack)\n";
 }

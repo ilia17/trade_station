@@ -1,79 +1,70 @@
-# Build directories
+# ── Build output ─────────────────────────────────────────────────────────────
+orderbook_stream
 build/
 cmake-build-*/
 
-# Compiled Object files
+# ── Compiled objects / libraries ─────────────────────────────────────────────
 *.o
-*.obj
+*.a
 *.so
 *.dylib
 *.dll
 
-# Executables
-*.exe
-*.out
-*.app
-
-# CMake
+# ── CMake generated files (NOT the hand-crafted Makefile) ────────────────────
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
-Makefile
+CMakeScripts/
 *.cmake
 
-# IDE files
+# ── ImGui generated ini (do not track window layout) ─────────────────────────
+imgui.ini
+
+# ── ImGui vendored source — large, pull separately ───────────────────────────
+imgui/
+
+# ── Protobuf generated files (regenerate with protoc from .proto sources) ────
+proto/*.pb.cc
+proto/*.pb.h
+
+# ── Credentials & API keys — NEVER commit ────────────────────────────────────
+.env
+!.env.example
+*api_key*
+*api_secret*
+*.pem
+*.key
+*id_rsa*
+*id_ed25519*
+config/secrets.*
+credentials.*
+
+# ── IDE / editor ──────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.DS_Store
+.clangd/
+.clang-tidy
+compile_commands.json
 
-# Logs
-*.log
-logs/
-
-# Data directory - SENSITIVE!
-data/api_keys.json
-data/bot_configs.json
-data/*.json
-data/*.db
-
-# API Keys and SSH Keys (NEVER commit these!)
-*api_key*
-*api_secret*
-*.env
-.env.*
-*.pem
-*.key
-*id_rsa*
-*id_ed25519*
-*.sshid*
-
-# Backup files
-*.bak
-*.backup
-
-# Temporary files
-*.tmp
-.cache/
-
-# Windows
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
-# Linux
-.directory
-.Trash-*
-
-# macOS
+# ── OS files ──────────────────────────────────────────────────────────────────
 .DS_Store
 .AppleDouble
 .LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.directory
+.Trash-*
 
-# Generated Protobuf files (auto-generated from mexc-proto submodule)
-proto/*.pb.cc
-proto/*.pb.h
-proto/*.proto
+# ── Logs & temp ───────────────────────────────────────────────────────────────
+*.log
+logs/
+*.tmp
+.cache/
 
+# ── Backups ───────────────────────────────────────────────────────────────────
+*.bak
+*.backup

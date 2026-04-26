@@ -5,6 +5,7 @@
 #include <atomic>
 #include "orderbook.h"
 #include "disruptor.h"
+#include "trades.h"
 
 class Exchange {
 protected:
@@ -12,6 +13,7 @@ protected:
     std::string symbol;
     std::string ws_url;
     Disruptor<1024>& disruptor;
+    SharedTrades*    shared_trades{nullptr};
     std::atomic<bool> running{false};
 
 public:
@@ -33,10 +35,18 @@ public:
     virtual void disconnect() = 0;
     virtual void run()        = 0;
 
+    // Optional — re-subscribe to a new base/quote pair while connected.
+    // Each handler overrides with exchange-specific symbol formatting.
+    virtual void change_symbol(const std::string& /*base*/,
+                               const std::string& /*quote*/) {}
+
     // Common — same for all exchanges
+    void set_shared_trades(SharedTrades* st) { shared_trades = st; }
+
     void stop() { running.store(false, std::memory_order_release); }
     bool is_running() const { return running.load(std::memory_order_acquire); }
-    const std::string& get_name() const { return name; }
+    const std::string& get_name()   const { return name;   }
+    const std::string& get_symbol() const { return symbol; }
 };
 
 #endif
