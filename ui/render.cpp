@@ -200,19 +200,18 @@ static void draw_book_table(int idx, const OrderBookUpdate& ex,
         }
 
         ImGui::TableSetColumnIndex(1);
-        float cell_w = ImGui::GetContentRegionAvail().x;
+        ImVec2 price_pos = ImGui::GetCursorScreenPos();
         char sel_id[32];
         snprintf(sel_id, sizeof(sel_id), "##sel%s%d_%d",
                  is_asks ? "a" : "b", idx, i);
-        if (ImGui::Selectable(sel_id, false, 0, ImVec2(cell_w, lh))) {
+        if (ImGui::Selectable(sel_id, false, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0, lh))) {
             snprintf(f.price_buf, sizeof(f.price_buf), "%.8g", p);
             snprintf(f.qty_buf,   sizeof(f.qty_buf),   "%.8g", q);
         }
         {
-            const ImVec2 rmin = ImGui::GetItemRectMin();
             ImU32 px_col = is_asks ? IM_COL32(255, 150, 150, 255) : IM_COL32(150, 235, 170, 255);
             ImGui::GetWindowDrawList()->AddText(
-                ImVec2(rmin.x + 4.f, rmin.y + 1.f),
+                ImVec2(price_pos.x + 4.f, price_pos.y + 1.f),
                 px_col,
                 fmt_price(p).c_str());
         }
