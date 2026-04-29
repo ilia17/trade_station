@@ -19,8 +19,10 @@ IMGUI_SRCS  = imgui/imgui.cpp \
               imgui/backends/imgui_impl_opengl3.cpp
 
 TRADING_SRCS = mexc/mexc_trader.cpp \
+               mexc/mexc_order_stream.cpp \
                gate/gate_trader.cpp \
                bingx/bingx_trader.cpp \
+               bingx/bingx_order_stream.cpp \
                lbank/lbank_trader.cpp
 
 SRCS = main.cpp \

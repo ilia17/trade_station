@@ -43,7 +43,6 @@ ssl_context_ptr BingXHandler::on_tls_init() {
 void BingXHandler::on_open(websocketpp::connection_hdl hdl) {
     connection = hdl;
     running.store(true, std::memory_order_release);
-    std::cout << "[BingX] Connected\n";
     subscribe();
     subscribe_trades();
     schedule_ping();
@@ -67,7 +66,6 @@ void BingXHandler::subscribe() {
         {"dataType", symbol + "@depth20"}
     };
     client.send(connection, sub.dump(), websocketpp::frame::opcode::text);
-    std::cout << "[BingX] Subscribed to " << symbol << " depth20\n";
 }
 
 void BingXHandler::on_message(websocketpp::connection_hdl hdl,
@@ -81,7 +79,7 @@ void BingXHandler::on_message(websocketpp::connection_hdl hdl,
         try {
             raw = decompress_gzip(raw);
         } catch (const std::exception& e) {
-            std::cout << "[BingX] decompress error: " << e.what() << "\n";
+            std::cerr << "[BingX] decompress error: " << e.what() << "\n";
             return;
         }
     }
@@ -101,7 +99,6 @@ void BingXHandler::on_message(websocketpp::connection_hdl hdl,
 
         // Subscription ack or other control message
         if (!j.contains("dataType") || !j.contains("data")) {
-            std::cout << "[BingX] server msg: " << raw << "\n";
             return;
         }
 
@@ -124,7 +121,7 @@ void BingXHandler::on_message(websocketpp::connection_hdl hdl,
             disruptor.publish(update);
         }
     } catch (const std::exception& e) {
-        std::cout << "[BingX] error: " << e.what() << "\n";
+        std::cerr << "[BingX] error: " << e.what() << "\n";
     }
 }
 
@@ -199,21 +196,17 @@ std::string BingXHandler::decompress_gzip(const std::string& compressed) {
 
 void BingXHandler::on_close(websocketpp::connection_hdl hdl) {
     running.store(false, std::memory_order_release);
-    auto con = client.get_con_from_hdl(hdl);
-    std::cout << "[BingX] Disconnected — code=" << con->get_remote_close_code()
-              << " reason=" << con->get_remote_close_reason() << "\n";
 }
 
 void BingXHandler::on_fail(websocketpp::connection_hdl hdl) {
     running.store(false, std::memory_order_release);
-    std::cout << "[BingX] Connection failed\n";
 }
 
 void BingXHandler::connect() {
     websocketpp::lib::error_code ec;
     ws_client::connection_ptr con = client.get_connection(ws_url, ec);
     if (ec) {
-        std::cout << "[BingX] Connection error: " << ec.message() << "\n";
+        std::cerr << "[BingX] Connection error: " << ec.message() << "\n";
         return;
     }
     client.connect(con);
@@ -276,5 +269,4 @@ void BingXHandler::change_symbol(const std::string& base, const std::string& quo
     client.send(connection, tunsub.dump(), websocketpp::frame::opcode::text, ec);
     json tsub = {{"id",std::to_string(ts2+1)},{"reqType","sub"},{"dataType",symbol+"@trade"}};
     client.send(connection, tsub.dump(), websocketpp::frame::opcode::text, ec);
-    std::cout << "[BingX] Resubscribed to " << symbol << "\n";
 }

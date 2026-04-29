@@ -115,7 +115,18 @@ std::vector<PlacedOrder> BingXTrader::fetch_open_orders(const std::string& symbo
             std::string side = item.value("side", "BUY");
             o.side = (side == "BUY") ? Side::BUY : Side::SELL;
             try { o.price = std::stod(item.value("price",    "0")); } catch(...) {}
-            try { o.qty   = std::stod(item.value("quantity", "0")); } catch(...) {}
+            // BingX REST uses "origQty" (original base qty); fall back to "quantity"
+            // and "origQuoteOrderQty" (quote amount) for market-by-amount orders.
+            try {
+                std::string qty_str = item.contains("origQty") && !item["origQty"].is_null()
+                    ? item.value("origQty", "0") : item.value("quantity", "0");
+                o.qty = std::stod(qty_str);
+                if (o.qty <= 0) {
+                    std::string q_str = item.value("origQuoteOrderQty", "0");
+                    if (q_str.empty()) q_str = "0";
+                    o.qty = std::stod(q_str);
+                }
+            } catch(...) {}
             if (!o.order_id.empty()) out.push_back(std::move(o));
         }
         return out;

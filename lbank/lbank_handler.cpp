@@ -41,7 +41,6 @@ ssl_context_ptr LBankHandler::on_tls_init() {
 void LBankHandler::on_open(websocketpp::connection_hdl hdl) {
     connection = hdl;
     running.store(true, std::memory_order_release);
-    std::cout << "[LBank] Connected\n";
     subscribe();
     subscribe_trades();
     schedule_ping();
@@ -68,7 +67,6 @@ void LBankHandler::subscribe() {
         {"pair",      symbol}
     };
     client.send(connection, sub.dump(), websocketpp::frame::opcode::text);
-    std::cout << "[LBank] Subscribed to " << symbol << " depth\n";
 }
 
 void LBankHandler::on_message(websocketpp::connection_hdl hdl,
@@ -107,11 +105,11 @@ void LBankHandler::on_message(websocketpp::connection_hdl hdl,
             return;
         }
 
-        // Anything else — subscription acks etc.
-        std::cout << "[LBank] server msg: " << raw << "\n";
+        // Subscription acks etc. — silent
+        return;
 
     } catch (const std::exception& e) {
-        std::cout << "[LBank] error: " << e.what() << "\n";
+        std::cerr << "[LBank] error: " << e.what() << "\n";
     }
 }
 
@@ -158,21 +156,17 @@ OrderBookUpdate LBankHandler::parse_snapshot(const json& depth) {
 
 void LBankHandler::on_close(websocketpp::connection_hdl hdl) {
     running.store(false, std::memory_order_release);
-    auto con = client.get_con_from_hdl(hdl);
-    std::cout << "[LBank] Disconnected — code=" << con->get_remote_close_code()
-              << " reason=" << con->get_remote_close_reason() << "\n";
 }
 
 void LBankHandler::on_fail(websocketpp::connection_hdl hdl) {
     running.store(false, std::memory_order_release);
-    std::cout << "[LBank] Connection failed\n";
 }
 
 void LBankHandler::connect() {
     websocketpp::lib::error_code ec;
     ws_client::connection_ptr con = client.get_connection(ws_url, ec);
     if (ec) {
-        std::cout << "[LBank] Connection error: " << ec.message() << "\n";
+        std::cerr << "[LBank] Connection error: " << ec.message() << "\n";
         return;
     }
     client.connect(con);
@@ -259,5 +253,4 @@ void LBankHandler::change_symbol(const std::string& base, const std::string& quo
     client.send(connection, tunsub.dump(), websocketpp::frame::opcode::text, ec);
     json tsub = {{"action","subscribe"},{"subscribe","trade"},{"pair",symbol}};
     client.send(connection, tsub.dump(), websocketpp::frame::opcode::text, ec);
-    std::cout << "[LBank] Resubscribed to " << symbol << "\n";
 }

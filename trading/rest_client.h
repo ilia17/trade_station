@@ -140,4 +140,12 @@ inline std::string https_delete(
     return https_request(http::verb::delete_, host, target, body, headers);
 }
 
+inline std::string https_put(
+    const std::string& host, const std::string& target,
+    const std::string& body,
+    const std::vector<std::pair<std::string,std::string>>& headers)
+{
+    return https_request(http::verb::put, host, target, body, headers);
+}
+
 #endif

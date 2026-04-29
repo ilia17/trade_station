@@ -18,7 +18,8 @@
 // Exposes has_keys(exchange) and async submit().
 class TradeManager {
 public:
-    TradeManager() {
+    // order_events: optional queue for Gate.io real-time order updates via spot.orders WS channel
+    explicit TradeManager(SharedOrderEvents* order_events = nullptr) {
         auto load = [](const char* k, const char* s) -> std::pair<std::string,std::string> {
             const char* key = std::getenv(k);
             const char* sec = std::getenv(s);
@@ -31,9 +32,17 @@ public:
         auto [lk, ls] = load("LBANK_API_KEY", "LBANK_API_SECRET");
 
         if (!mk.empty() && !ms.empty()) mexc_  = std::make_unique<MexcTrader>(mk, ms);
-        if (!gk.empty() && !gs.empty()) gate_  = std::make_unique<GateTrader>(gk, gs);
+        if (!gk.empty() && !gs.empty()) gate_  = std::make_unique<GateTrader>(gk, gs, order_events);
         if (!bk.empty() && !bs.empty()) bingx_ = std::make_unique<BingXTrader>(bk, bs);
         if (!lk.empty() && !ls.empty()) lbank_ = std::make_unique<LBankTrader>(lk, ls);
+    }
+
+    // Stop all exchange connections (call before joining market-data threads).
+    void shutdown() {
+        gate_.reset();   // destroys GateTrader → GateWsImpl threads stop
+        mexc_.reset();
+        bingx_.reset();
+        lbank_.reset();
     }
 
     bool has_keys(const std::string& exchange) const {

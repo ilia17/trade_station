@@ -39,7 +39,6 @@ ssl_context_ptr MexcHandler::on_tls_init() {
 void MexcHandler::on_open(websocketpp::connection_hdl hdl) {
     connection = hdl;
     running.store(true, std::memory_order_release);
-    std::cout << "[MEXC] Connected\n";
     subscribe();
     subscribe_trades();
 }
@@ -61,7 +60,6 @@ void MexcHandler::subscribe() {
         {"params", {"spot@public.aggre.depth.v3.api.pb@100ms@" + symbol}}
     };
     client.send(connection, sub.dump(), websocketpp::frame::opcode::text);
-    std::cout << "[MEXC] Subscribed to " << symbol << " protobuf depth stream\n";
 }
 
 void MexcHandler::on_message(websocketpp::connection_hdl hdl,
@@ -91,7 +89,7 @@ void MexcHandler::on_message(websocketpp::connection_hdl hdl,
             }
             // Silence pong echoes too
             if (j.contains("msg") && j["msg"] == "pong") return;
-            std::cout << "[MEXC] server msg: " << raw << "\n";
+            return;
         } catch (...) {}
         return;
     }
@@ -103,7 +101,6 @@ void MexcHandler::on_message(websocketpp::connection_hdl hdl,
     try {
         PushDataV3ApiWrapper wrapper;
         if (!wrapper.ParseFromString(raw)) {
-            std::cout << "[MEXC] protobuf parse failed, bytes=" << raw.size() << "\n";
             return;
         }
 
@@ -120,7 +117,7 @@ void MexcHandler::on_message(websocketpp::connection_hdl hdl,
                 parse_trade_pb(wrapper.publicaggredeals());
         }
     } catch (const std::exception& e) {
-        std::cout << "[MEXC] error: " << e.what() << "\n";
+        std::cerr << "[MEXC] error: " << e.what() << "\n";
     }
 }
 
@@ -170,21 +167,17 @@ OrderBookUpdate MexcHandler::apply_depth(const PublicAggreDepthsV3Api& depths) {
 
 void MexcHandler::on_close(websocketpp::connection_hdl hdl) {
     running.store(false, std::memory_order_release);
-    auto con = client.get_con_from_hdl(hdl);
-    std::cout << "[MEXC] Disconnected — code=" << con->get_remote_close_code()
-              << " reason=" << con->get_remote_close_reason() << "\n";
 }
 
 void MexcHandler::on_fail(websocketpp::connection_hdl hdl) {
     running.store(false, std::memory_order_release);
-    std::cout << "[MEXC] Connection failed\n";
 }
 
 void MexcHandler::connect() {
     websocketpp::lib::error_code ec;
     ws_client::connection_ptr con = client.get_connection(ws_url, ec);
     if (ec) {
-        std::cout << "[MEXC] Connection error: " << ec.message() << "\n";
+        std::cerr << "[MEXC] Connection error: " << ec.message() << "\n";
         return;
     }
     client.connect(con);
@@ -250,6 +243,4 @@ void MexcHandler::change_symbol(const std::string& base, const std::string& quot
         {"params", {"spot@public.aggre.deals.v3.api.pb@100ms@" + symbol}}};
     client.send(connection, sub_depth.dump(), websocketpp::frame::opcode::text, ec);
     client.send(connection, sub_deals.dump(), websocketpp::frame::opcode::text, ec);
-
-    std::cout << "[MEXC] Resubscribed to " << symbol << " (awaiting ack)\n";
 }

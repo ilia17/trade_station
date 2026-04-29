@@ -40,7 +40,6 @@ ssl_context_ptr GateHandler::on_tls_init() {
 void GateHandler::on_open(websocketpp::connection_hdl hdl) {
     connection = hdl;
     running.store(true, std::memory_order_release);
-    std::cout << "[Gate] Connected\n";
     subscribe();
     subscribe_trades();
     schedule_ping();
@@ -70,7 +69,6 @@ void GateHandler::subscribe() {
         {"payload", json::array({symbol, "5", "100ms"})}
     };
     client.send(connection, sub.dump(), websocketpp::frame::opcode::text);
-    std::cout << "[Gate] Subscribed to " << symbol << " order book\n";
 }
 
 void GateHandler::on_message(websocketpp::connection_hdl hdl,
@@ -82,7 +80,6 @@ void GateHandler::on_message(websocketpp::connection_hdl hdl,
         // Acks and pings — not data; suppress noisy spot.pong acks
         if (!j.contains("event") || j["event"] != "update") {
             if (j.contains("channel") && j["channel"] == "spot.pong") return;
-            std::cout << "[Gate] server msg: " << raw << "\n";
             return;
         }
         if (j.contains("channel") && j["channel"] == "spot.trades" &&
@@ -102,7 +99,7 @@ void GateHandler::on_message(websocketpp::connection_hdl hdl,
             disruptor.publish(update);
         }
     } catch (const std::exception& e) {
-        std::cout << "[Gate] error: " << e.what() << "\n";
+        std::cerr << "[Gate] error: " << e.what() << "\n";
     }
 }
 
@@ -143,21 +140,17 @@ OrderBookUpdate GateHandler::parse_snapshot(const json& result) {
 
 void GateHandler::on_close(websocketpp::connection_hdl hdl) {
     running.store(false, std::memory_order_release);
-    auto con = client.get_con_from_hdl(hdl);
-    std::cout << "[Gate] Disconnected — code=" << con->get_remote_close_code()
-              << " reason=" << con->get_remote_close_reason() << "\n";
 }
 
 void GateHandler::on_fail(websocketpp::connection_hdl hdl) {
     running.store(false, std::memory_order_release);
-    std::cout << "[Gate] Connection failed\n";
 }
 
 void GateHandler::connect() {
     websocketpp::lib::error_code ec;
     ws_client::connection_ptr con = client.get_connection(ws_url, ec);
     if (ec) {
-        std::cout << "[Gate] Connection error: " << ec.message() << "\n";
+        std::cerr << "[Gate] Connection error: " << ec.message() << "\n";
         return;
     }
     client.connect(con);
@@ -231,5 +224,4 @@ void GateHandler::change_symbol(const std::string& base, const std::string& quot
     client.send(connection, tunsub.dump(), websocketpp::frame::opcode::text, ec);
     json tsub = {{"time",ts2+1},{"channel","spot.trades"},{"event","subscribe"},{"payload",json::array({symbol})}};
     client.send(connection, tsub.dump(), websocketpp::frame::opcode::text, ec);
-    std::cout << "[Gate] Resubscribed to " << symbol << "\n";
 }
