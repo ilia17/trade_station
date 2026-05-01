@@ -168,7 +168,7 @@ static OrderFormState g_forms[4];
 // ── Order book table ──────────────────────────────────────────────────────────
 
 static void draw_book_table(int idx, const OrderBookUpdate& ex,
-                            OrderFormState& f, bool is_asks) {
+                            OrderFormState& f, bool is_asks, bool arb_highlight = false) {
     ImGuiTableFlags tfl = ImGuiTableFlags_NoHostExtendX |
                           ImGuiTableFlags_SizingFixedFit;
     char tid[32]; snprintf(tid, sizeof(tid), "##tbl%s%d", is_asks ? "a" : "b", idx);
@@ -189,7 +189,12 @@ static void draw_book_table(int idx, const OrderBookUpdate& ex,
         bool mine = any_my_order_at_level(f, p, is_asks, ex);
         bool dot_green = mine && !is_asks;  // bid side → BUY (green)
 
+        bool is_arb_row = arb_highlight && (is_asks ? r == count - 1 : r == 0);
+
         ImGui::TableNextRow();
+        if (is_arb_row)
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(230, 210, 0, 220));
+
         ImGui::TableSetColumnIndex(0);
         ImVec2 c0 = ImGui::GetCursorScreenPos();
         ImGui::Dummy(ImVec2(12, lh));
@@ -209,7 +214,9 @@ static void draw_book_table(int idx, const OrderBookUpdate& ex,
             snprintf(f.qty_buf,   sizeof(f.qty_buf),   "%.8g", q);
         }
         {
-            ImU32 px_col = is_asks ? IM_COL32(255, 150, 150, 255) : IM_COL32(150, 235, 170, 255);
+            ImU32 px_col = is_arb_row ? IM_COL32(20,  15,  0,   255)
+                         : is_asks    ? IM_COL32(255, 150, 150, 255)
+                                      : IM_COL32(150, 235, 170, 255);
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(price_pos.x + 4.f, price_pos.y + 1.f),
                 px_col,
@@ -217,10 +224,12 @@ static void draw_book_table(int idx, const OrderBookUpdate& ex,
         }
 
         ImGui::TableSetColumnIndex(2);
-        ImGui::Text("%s", fmt_qty(q).c_str());
+        if (is_arb_row) ImGui::TextColored(ImVec4(0.08f,0.06f,0.0f,1.f), "%s", fmt_qty(q).c_str());
+        else            ImGui::Text("%s", fmt_qty(q).c_str());
 
         ImGui::TableSetColumnIndex(3);
-        ImGui::Text("%s", fmt_total(p * q).c_str());
+        if (is_arb_row) ImGui::TextColored(ImVec4(0.08f,0.06f,0.0f,1.f), "%s", fmt_total(p*q).c_str());
+        else            ImGui::Text("%s", fmt_total(p * q).c_str());
     }
     ImGui::EndTable();
 }
@@ -228,7 +237,7 @@ static void draw_book_table(int idx, const OrderBookUpdate& ex,
 // ── Recent trades table ───────────────────────────────────────────────────────
 
 static void draw_trades_table(int idx, const OrderBookUpdate& ex,
-                              SharedTrades& shared_trades) {
+                              SharedTrades& shared_trades, float force_h = 0.f) {
     Trade  t_snap[SharedTrades::MAX]{};
     int    t_count = 0;
     shared_trades.snapshot(ex.exchange, t_snap, t_count);
@@ -239,7 +248,9 @@ static void draw_trades_table(int idx, const OrderBookUpdate& ex,
                           ImGuiTableFlags_SizingFixedFit |
                           ImGuiTableFlags_ScrollY;
     float row_h = ImGui::GetTextLineHeightWithSpacing();
-    float tbl_h = row_h * 10.f + ImGui::GetStyle().ScrollbarSize;
+    float tbl_h = (force_h > row_h * 4.f)
+                  ? force_h
+                  : row_h * 10.f + ImGui::GetStyle().ScrollbarSize;
 
     char tid[32]; snprintf(tid, sizeof(tid), "##tr%d", idx);
     if (!ImGui::BeginTable(tid, 4, tfl, ImVec2(-1, tbl_h))) return;
@@ -401,6 +412,24 @@ static void draw_order_form(int idx, const OrderBookUpdate& ex,
 // Per-panel exchange metadata used for fetch
 struct PanelMeta { const char* name; };
 static const PanelMeta k_panels[4] = {{"MEXC"}, {"Gate"}, {"BingX"}, {"LBank"}};
+
+static ImVec4 exchange_accent_color(const char* ex) {
+    if (!ex || !ex[0])          return ImVec4(0.5f, 0.5f, 0.5f, 1.f);
+    if (strcmp(ex, "MEXC")  == 0) return ImVec4(0.30f, 0.55f, 0.95f, 1.f);
+    if (strcmp(ex, "Gate")  == 0) return ImVec4(0.28f, 0.82f, 0.44f, 1.f);
+    if (strcmp(ex, "BingX") == 0) return ImVec4(0.65f, 0.40f, 0.92f, 1.f);
+    if (strcmp(ex, "LBank") == 0) return ImVec4(0.96f, 0.58f, 0.20f, 1.f);
+    return ImVec4(0.6f, 0.6f, 0.6f, 1.f);
+}
+
+static ImVec4 exchange_bg_color(const char* ex) {
+    if (!ex || !ex[0])          return ImVec4(0.11f, 0.11f, 0.14f, 1.f);
+    if (strcmp(ex, "MEXC")  == 0) return ImVec4(0.10f, 0.11f, 0.17f, 1.f);
+    if (strcmp(ex, "Gate")  == 0) return ImVec4(0.09f, 0.14f, 0.10f, 1.f);
+    if (strcmp(ex, "BingX") == 0) return ImVec4(0.12f, 0.10f, 0.16f, 1.f);
+    if (strcmp(ex, "LBank") == 0) return ImVec4(0.15f, 0.12f, 0.09f, 1.f);
+    return ImVec4(0.11f, 0.11f, 0.14f, 1.f);
+}
 
 // Build exchange-specific symbol string from base/quote for a given exchange name
 static std::string exchange_symbol(const std::string& exchange) {
@@ -634,11 +663,14 @@ static void draw_open_orders(int idx, const OrderBookUpdate& ex,
 // ── Full panel ────────────────────────────────────────────────────────────────
 
 static void draw_panel(int idx, const OrderBookUpdate& ex,
-                       TradeManager& trader, SharedTrades& shared_trades) {
+                       TradeManager& trader, SharedTrades& shared_trades,
+                       bool arb_ask = false, bool arb_bid = false) {
     // Header
     char header[64];
     snprintf(header, sizeof(header), "%.15s  %.15s", ex.exchange, ex.symbol);
+    ImGui::PushStyleColor(ImGuiCol_Text, exchange_accent_color(ex.exchange));
     ImGui::SeparatorText(header);
+    ImGui::PopStyleColor();
 
     // Column headers — match table stretch ratios
     if (ImGui::BeginTable("##hdr", 4,
@@ -663,7 +695,7 @@ static void draw_panel(int idx, const OrderBookUpdate& ex,
     ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.9f,0.35f,0.35f,1.f));
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.55f,0.15f,0.15f,0.6f));
     ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.7f,0.2f,0.2f,0.8f));
-    draw_book_table(idx, ex, f, true);
+    draw_book_table(idx, ex, f, true, arb_ask);
     ImGui::PopStyleColor(3);
 
     // Spread
@@ -677,11 +709,17 @@ static void draw_panel(int idx, const OrderBookUpdate& ex,
     ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.35f,0.85f,0.45f,1.f));
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.1f,0.45f,0.15f,0.6f));
     ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.15f,0.6f,0.2f,0.8f));
-    draw_book_table(idx, ex, f, false);
+    draw_book_table(idx, ex, f, false, arb_bid);
     ImGui::PopStyleColor(3);
 
-    // Recent trades
-    draw_trades_table(idx, ex, shared_trades);
+    // Recent trades — fill remaining space minus reservation for order form + open orders
+    {
+        float rh       = ImGui::GetTextLineHeightWithSpacing();
+        float avail    = ImGui::GetContentRegionAvail().y;
+        float reserved = rh * 14.f;
+        float trades_h = (avail > reserved + rh * 5.f) ? (avail - reserved) : 0.f;
+        draw_trades_table(idx, ex, shared_trades, trades_h);
+    }
 
     // Order form
     draw_order_form(idx, ex, trader);
@@ -891,6 +929,20 @@ void render_run(SharedDisplay& display, SharedTrades& shared_trades,
 
         ImGui::Separator();
 
+        // ── Arbitrage detection — all exchange pairs ──────────────────────────
+        bool arb_ask_flag[4]{};
+        bool arb_bid_flag[4]{};
+        for (int i = 0; i < count; i++) {
+            if (books[i].ask_count == 0 || books[i].asks[0].price <= 0) continue;
+            for (int j = 0; j < count; j++) {
+                if (i == j || books[j].bid_count == 0 || books[j].bids[0].price <= 0) continue;
+                if (books[j].bids[0].price > books[i].asks[0].price) {
+                    arb_ask_flag[i] = true;
+                    arb_bid_flag[j] = true;
+                }
+            }
+        }
+
         // ── Exchange panels ───────────────────────────────────────────────────
         float avail_w = ImGui::GetContentRegionAvail().x;
         float avail_h = ImGui::GetContentRegionAvail().y;
@@ -900,13 +952,16 @@ void render_run(SharedDisplay& display, SharedTrades& shared_trades,
 
         for (int i = 0; i < count; i++) {
             char pid[16]; snprintf(pid, sizeof(pid), "##ex%d", i);
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f,0.11f,0.14f,1.f));
+            bool arb_ask_panel = arb_ask_flag[i];
+            bool arb_bid_panel = arb_bid_flag[i];
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, exchange_bg_color(books[i].exchange));
+            ImGui::PushStyleColor(ImGuiCol_Border,  exchange_accent_color(books[i].exchange));
             if (ImGui::BeginChild(pid, ImVec2(panel_w, avail_h),
                                   ImGuiChildFlags_Borders)) {
-                draw_panel(i, books[i], trader, shared_trades);
+                draw_panel(i, books[i], trader, shared_trades, arb_ask_panel, arb_bid_panel);
             }
             ImGui::EndChild();
-            ImGui::PopStyleColor();
+            ImGui::PopStyleColor(2);
             if (i < count - 1) ImGui::SameLine(0.f, gap);
         }
 
